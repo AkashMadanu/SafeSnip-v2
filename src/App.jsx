@@ -1,5 +1,5 @@
 // App.jsx
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './App.css';
 import SplashCursor from './SplashCursor';
 const apiKey = import.meta.env.VITE_API_KEY;
@@ -8,17 +8,6 @@ const apiKey = import.meta.env.VITE_API_KEY;
 const SHORTENER_API_URL = 'https://tinyurl.com/api-create.php';
 const GOOGLE_API_KEY = apiKey; // From Google Cloud Console
 
-// Production URL configuration
-const getBaseUrl = () => {
-  // Check if we're in development (localhost) or production
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return `${window.location.origin}${window.location.pathname}`;
-  }
-  
-  // For GitHub Pages, use the full production URL
-  // This will be something like: https://yourusername.github.io/safesnip/
-  return `${window.location.origin}${window.location.pathname}`;
-};
 
 // --- QR Code Generation --- //
 const generateQRCode = (url) => {
@@ -166,89 +155,9 @@ function App() {
   const [copyText, setCopyText] = useState('Copy');
   const [passwordProtected, setPasswordProtected] = useState(false);
   const [password, setPassword] = useState('');
-  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
-  const [verificationUrl, setVerificationUrl] = useState('');
-  const [verificationPassword, setVerificationPassword] = useState('');
 
-  // Password protection utility functions
-  const generateProtectedUrl = (originalUrl, password) => {
-    // Create the full data we need to store
-    const protectedData = {
-      originalUrl,
-      password: btoa(password),
-      timestamp: Date.now()
-    };
-    
-    // Generate full hash from the data
-    const fullHash = btoa(JSON.stringify(protectedData));
-    
-    // Take only FIRST 5 characters for the short URL display
-    const shortHash = fullHash.substring(0, 5);
-    
-    // Create a verification URL that contains full data but shows short hash
-    const verificationUrl = `${getBaseUrl()}#verify/${shortHash}`;
-    
-    // Store full data using short hash as key for verification
-    localStorage.setItem(`pwd_${shortHash}`, fullHash);
-    
-    return verificationUrl;
-  };
-
-  const verifyProtectedUrl = (shortHash, inputPassword) => {
-    try {
-      // Get the full hash data from localStorage
-      const fullHashData = localStorage.getItem(`pwd_${shortHash}`);
-      if (!fullHashData) {
-        return null;
-      }
-      
-      // Decode the full hash to get original data
-      const protectedDataJson = atob(fullHashData);
-      const data = JSON.parse(protectedDataJson);
-      const storedPassword = atob(data.password);
-      
-      if (inputPassword === storedPassword) {
-        return data.originalUrl;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  const handleVerifyPassword = () => {
-    setError(null); // Clear previous errors
-    
-    const urlParts = verificationUrl.split('/');
-    const shortHash = urlParts[urlParts.length - 1];
-    
-    const originalUrl = verifyProtectedUrl(shortHash, verificationPassword);
-    
-    if (originalUrl) {
-      // First close the modal and clear state
-      setShowPasswordVerification(false);
-      setVerificationPassword('');
-      setError(null);
-      
-      // Then clear the hash and open URL
-      setTimeout(() => {
-        window.location.hash = '';
-        window.open(originalUrl, '_blank');
-      }, 100);
-    } else {
-      setError('Incorrect password. Please try again.');
-    }
-  };
-
-  // Check for verification URL on page load
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.startsWith('#verify/') && !showPasswordVerification) {
-      const shortHash = hash.replace('#verify/', '');
-      setVerificationUrl(`#verify/${shortHash}`);
-      setShowPasswordVerification(true);
-    }
-  }, []); // Remove dependency to prevent loops
+  // Only show password protection if running locally
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
   const validateUrl = (inputUrl) => {
     try {
@@ -292,12 +201,11 @@ function App() {
       // 2. ONLY IF SAFE: Proceed to shorten with TinyURL
       
       let finalUrl;
-      if (passwordProtected && password.trim()) {
-        // Create password-protected verification URL first
-        const verificationUrl = generateProtectedUrl(url, password.trim());
-        // Then shorten the verification URL with TinyURL for maximum shortness!
-        finalUrl = await shortenUrl(verificationUrl);
-        setExpiryInfo('Password-protected link created. Works on all devices!');
+      if (isLocalhost && passwordProtected && password.trim()) {
+        // For password protection, just show a warning but still shorten the URL normally
+        const shortUrl = await shortenUrl(url);
+        finalUrl = shortUrl;
+        setExpiryInfo('Note: Password protection is for local reference only. URL shortened normally.');
       } else {
         // Regular URL shortening
         const shortUrl = await shortenUrl(url);
@@ -375,7 +283,7 @@ function App() {
             />
             <button 
               type="submit"
-              disabled={isLoading || !url || (passwordProtected && !password.trim())}
+              disabled={isLoading || !url}
             >
               {isLoading ? (
                 <span className="loader"></span>
@@ -385,37 +293,36 @@ function App() {
             </button>
           </form>
           
-          {/* Password Protection Section */}
-          <div className="password-protection">
-            <label className="password-checkbox">
-              <input
-                type="checkbox"
-                checked={passwordProtected}
-                onChange={(e) => setPasswordProtected(e.target.checked)}
-                disabled={isLoading}
-              />
-              <span className="checkmark"></span>
-              Password protect this link
-            </label>
-            
-            {passwordProtected && (
-              <div className="password-input-container">
+          {/* Password Protection Section - Only show on localhost */}
+          {isLocalhost && (
+            <div className="password-protection">
+              <label className="password-checkbox">
                 <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
+                  type="checkbox"
+                  checked={passwordProtected}
+                  onChange={(e) => setPasswordProtected(e.target.checked)}
                   disabled={isLoading}
-                  className="password-input"
                 />
-              </div>
-            )}
-          </div>
-          
-          {/* Warning Note - Appears below the entire password section when checked */}
-          {passwordProtected && (
-            <div className="password-limitation-note">
-              ⚠️ Note: Password-protected links work only on the same device/browser where they were created. For cross-device sharing, use regular shortened links.
+                <span className="checkmark"></span>
+                Password protect this link
+              </label>
+              {passwordProtected && (
+                <div className="password-input-container">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter password"
+                    disabled={isLoading}
+                    className="password-input"
+                  />
+                </div>
+              )}
+              {passwordProtected && (
+                <div className="password-limitation-note">
+                  ⚠️ Note: This adds a password note for your reference. The shortened URL works normally for sharing.
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -484,6 +391,12 @@ function App() {
               {expiryInfo && (
                 <div className="expiry-info">
                   {expiryInfo}
+                </div>
+              )}
+              
+              {isLocalhost && passwordProtected && password.trim() && (
+                <div className="password-note">
+                  🔐 Password Note: "{password}"
                 </div>
               )}
 
@@ -569,57 +482,6 @@ function App() {
       </div>
     </div>
     
-    {/* Password Verification Modal */}
-    {showPasswordVerification && (
-      <div className="modal-overlay">
-        <div className="password-modal">
-          <div className="modal-header">
-            <h3>Password Protected Link</h3>
-            <button 
-              className="close-modal"
-              onClick={() => {
-                window.location.hash = ''; // Clear the hash
-                setShowPasswordVerification(false);
-                setVerificationPassword('');
-                setError(null);
-              }}
-            >
-              ×
-            </button>
-          </div>
-          <div className="modal-content">
-            <p>This link is password protected. Please enter the password to continue:</p>
-            <div className="password-verification-form">
-              <input
-                type="password"
-                value={verificationPassword}
-                onChange={(e) => {
-                  setVerificationPassword(e.target.value);
-                  setError(null);
-                }}
-                placeholder="Enter password"
-                className="verification-password-input"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') handleVerifyPassword();
-                }}
-              />
-              <button 
-                onClick={handleVerifyPassword}
-                disabled={!verificationPassword.trim()}
-                className="verify-button"
-              >
-                Verify & Open
-              </button>
-            </div>
-            {error && (
-              <div className="verification-error">
-                {error}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    )}
     </>
   );
 }
