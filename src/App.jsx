@@ -1,5 +1,5 @@
 // App.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './App.css';
 import SplashCursor from './SplashCursor';
 const apiKey = import.meta.env.VITE_API_KEY;
@@ -155,9 +155,77 @@ function App() {
   const [copyText, setCopyText] = useState('Copy');
   const [passwordProtected, setPasswordProtected] = useState(false);
   const [password, setPassword] = useState('');
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [protectedUrlData, setProtectedUrlData] = useState(null);
+  const [inputPassword, setInputPassword] = useState('');
 
   // Only show password protection if running locally
-  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const isLocalhost = window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1' || 
+                      window.location.port === '5173' ||
+                      window.location.hostname.includes('192.168') ||
+                      window.location.protocol === 'file:';
+  
+  // Generate password-protected URL
+  const generateProtectedUrl = (originalUrl, password) => {
+    const protectedId = Math.random().toString(36).substring(2, 15);
+    const protectedData = {
+      originalUrl,
+      password: btoa(password), // Simple base64 encoding
+      timestamp: Date.now()
+    };
+    
+    // Store in localStorage with the protected ID
+    localStorage.setItem(`safesnip_protected_${protectedId}`, JSON.stringify(protectedData));
+    
+    // Return local verification URL
+    return `${window.location.origin}${window.location.pathname}#verify=${protectedId}`;
+  };
+  
+  // Check if current URL has password protection
+  const checkForProtectedUrl = () => {
+    const hash = window.location.hash;
+    if (hash.startsWith('#verify=')) {
+      const protectedId = hash.replace('#verify=', '');
+      const storedData = localStorage.getItem(`safesnip_protected_${protectedId}`);
+      
+      if (storedData) {
+        try {
+          const data = JSON.parse(storedData);
+          setProtectedUrlData(data);
+          setShowPasswordModal(true);
+        } catch (e) {
+          console.error('Error parsing protected URL data:', e);
+        }
+      }
+    }
+  };
+  
+  // Verify password and redirect
+  const verifyPassword = () => {
+    if (protectedUrlData && inputPassword) {
+      const storedPassword = atob(protectedUrlData.password);
+      if (inputPassword === storedPassword) {
+        // Password correct - redirect to original URL
+        window.location.href = protectedUrlData.originalUrl;
+      } else {
+        setError('Incorrect password. Please try again.');
+      }
+    }
+  };
+  
+  // Check for protected URL on component mount
+  useEffect(() => {
+    checkForProtectedUrl();
+  }, []);
+  
+  // Debug info (remove after testing)
+  console.log('Location info:', {
+    hostname: window.location.hostname,
+    port: window.location.port,
+    protocol: window.location.protocol,
+    isLocalhost: isLocalhost
+  });
 
   const validateUrl = (inputUrl) => {
     try {
@@ -202,10 +270,9 @@ function App() {
       
       let finalUrl;
       if (isLocalhost && passwordProtected && password.trim()) {
-        // For password protection, just show a warning but still shorten the URL normally
-        const shortUrl = await shortenUrl(url);
-        finalUrl = shortUrl;
-        setExpiryInfo('Note: Password protection is for local reference only. URL shortened normally.');
+        // Create password-protected URL that requires verification
+        finalUrl = generateProtectedUrl(url, password);
+        setExpiryInfo('Password-protected link created. Only accessible locally with correct password.');
       } else {
         // Regular URL shortening
         const shortUrl = await shortenUrl(url);
@@ -320,7 +387,7 @@ function App() {
               )}
               {passwordProtected && (
                 <div className="password-limitation-note">
-                  ⚠️ Note: This adds a password note for your reference. The shortened URL works normally for sharing.
+                  ⚠️ Note: Password-protected links require password verification and only work on this local machine.
                 </div>
               )}
             </div>
@@ -481,6 +548,59 @@ function App() {
         </ul>
       </div>
     </div>
+    
+    {/* Password Protection Modal */}
+    {showPasswordModal && protectedUrlData && (
+      <div className="modal-overlay">
+        <div className="password-modal">
+          <div className="modal-header">
+            <h3>Password Protected Link</h3>
+            <button 
+              className="close-modal"
+              onClick={() => {
+                setShowPasswordModal(false);
+                setProtectedUrlData(null);
+                setInputPassword('');
+                setError(null);
+                window.location.hash = '';
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div className="modal-content">
+            <p>This link is password protected. Please enter the password to continue:</p>
+            <div className="password-verification-form">
+              <input
+                type="password"
+                value={inputPassword}
+                onChange={(e) => {
+                  setInputPassword(e.target.value);
+                  setError(null);
+                }}
+                placeholder="Enter password"
+                className="verification-password-input"
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') verifyPassword();
+                }}
+              />
+              <button 
+                onClick={verifyPassword}
+                disabled={!inputPassword.trim()}
+                className="verify-button"
+              >
+                Verify & Open
+              </button>
+            </div>
+            {error && (
+              <div className="verification-error">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
     
     </>
   );
