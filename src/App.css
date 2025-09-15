@@ -553,6 +553,17 @@ button:disabled {
   color: var(--secondary-color);
 }
 
+.password-limitation-note {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(255, 170, 0, 0.1);
+  border: 1px solid var(--warning-color);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--warning-color);
+  line-height: 1.4;
+}
+
 /* Modal Styles */
 .modal-overlay {
   position: fixed;

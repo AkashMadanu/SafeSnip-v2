@@ -29,12 +29,8 @@ const generateQRCode = (url) => {
 
 // --- Services --- //
 const checkUrlSafety = async (url) => {
-  try {
-    console.log('Checking URL with Google Safe Browsing:', url);
-    
-    if (!GOOGLE_API_KEY || GOOGLE_API_KEY === 'undefined' || !apiKey) {
-      console.warn('Google Safe Browsing API key not configured, using basic malicious URL detection');
-      
+  try {    
+    if (!GOOGLE_API_KEY || GOOGLE_API_KEY === 'undefined' || !apiKey) {      
       // Basic malicious URL detection for common test malware URLs
       const maliciousPatterns = [
         'testsafebrowsing.appspot.com',
@@ -47,7 +43,6 @@ const checkUrlSafety = async (url) => {
       const isMalicious = maliciousPatterns.some(pattern => url.toLowerCase().includes(pattern.toLowerCase()));
       
       if (isMalicious) {
-        console.log('URL detected as malicious by pattern matching');
         return false; // URL is malicious
       }
       
@@ -85,43 +80,33 @@ const checkUrlSafety = async (url) => {
     }
     
     const data = await response.json();
-    console.log('Safe Browsing API response:', data);
     
     // If matches found, URL is malicious
     const isSafe = !data.matches || data.matches.length === 0;
-    console.log('URL safety result:', isSafe ? 'SAFE' : 'MALICIOUS');
     
     return isSafe;
-  } catch (error) {
-    console.error('Safety check failed:', error);
+  } catch {
     return true; // Assume safe if API fails
   }
 };
 
 const shortenUrl = async (longUrl) => {
-  try {
-    // TinyURL uses a simple GET request with URL parameter
-    const response = await fetch(`${SHORTENER_API_URL}?url=${encodeURIComponent(longUrl)}`, {
-      method: 'GET'
-    });
+  // TinyURL uses a simple GET request with URL parameter
+  const response = await fetch(`${SHORTENER_API_URL}?url=${encodeURIComponent(longUrl)}`, {
+    method: 'GET'
+  });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
 
-    const shortUrl = await response.text();
-    console.log('TinyURL Response:', shortUrl);
-    
-    // TinyURL returns the shortened URL directly as plain text
-    if (shortUrl && shortUrl.startsWith('https://tinyurl.com/')) {
-      return shortUrl.trim();
-    } else {
-      console.error('Unexpected TinyURL response:', shortUrl);
-      throw new Error('Unexpected response from URL shortener');
-    }
-  } catch (error) {
-    console.error('Shortening failed:', error);
-    throw error;
+  const shortUrl = await response.text();
+  
+  // TinyURL returns the shortened URL directly as plain text
+  if (shortUrl && shortUrl.startsWith('https://tinyurl.com/')) {
+    return shortUrl.trim();
+  } else {
+    throw new Error('Unexpected response from URL shortener');
   }
 };
 
@@ -187,26 +172,39 @@ function App() {
 
   // Password protection utility functions
   const generateProtectedUrl = (originalUrl, password) => {
-    const protectedId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    // Create the full data we need to store
     const protectedData = {
       originalUrl,
-      password: btoa(password), // Simple base64 encoding (not secure for production)
+      password: btoa(password),
       timestamp: Date.now()
     };
     
-    // Store in localStorage (in production, this should be server-side)
-    localStorage.setItem(`protected_${protectedId}`, JSON.stringify(protectedData));
+    // Generate full hash from the data
+    const fullHash = btoa(JSON.stringify(protectedData));
     
-    // Return a special URL that points to our verification system using production URL
-    return `${getBaseUrl()}#verify/${protectedId}`;
+    // Take only FIRST 5 characters for the short URL display
+    const shortHash = fullHash.substring(0, 5);
+    
+    // Create a verification URL that contains full data but shows short hash
+    const verificationUrl = `${getBaseUrl()}#verify/${shortHash}`;
+    
+    // Store full data using short hash as key for verification
+    localStorage.setItem(`pwd_${shortHash}`, fullHash);
+    
+    return verificationUrl;
   };
 
-  const verifyProtectedUrl = (protectedId, inputPassword) => {
+  const verifyProtectedUrl = (shortHash, inputPassword) => {
     try {
-      const storedData = localStorage.getItem(`protected_${protectedId}`);
-      if (!storedData) return null;
+      // Get the full hash data from localStorage
+      const fullHashData = localStorage.getItem(`pwd_${shortHash}`);
+      if (!fullHashData) {
+        return null;
+      }
       
-      const data = JSON.parse(storedData);
+      // Decode the full hash to get original data
+      const protectedDataJson = atob(fullHashData);
+      const data = JSON.parse(protectedDataJson);
       const storedPassword = atob(data.password);
       
       if (inputPassword === storedPassword) {
@@ -219,28 +217,38 @@ function App() {
   };
 
   const handleVerifyPassword = () => {
+    setError(null); // Clear previous errors
+    
     const urlParts = verificationUrl.split('/');
-    const protectedId = urlParts[urlParts.length - 1];
-    const originalUrl = verifyProtectedUrl(protectedId, verificationPassword);
+    const shortHash = urlParts[urlParts.length - 1];
+    
+    const originalUrl = verifyProtectedUrl(shortHash, verificationPassword);
     
     if (originalUrl) {
-      window.open(originalUrl, '_blank');
+      // First close the modal and clear state
       setShowPasswordVerification(false);
       setVerificationPassword('');
+      setError(null);
+      
+      // Then clear the hash and open URL
+      setTimeout(() => {
+        window.location.hash = '';
+        window.open(originalUrl, '_blank');
+      }, 100);
     } else {
-      setError('Incorrect password');
+      setError('Incorrect password. Please try again.');
     }
   };
 
   // Check for verification URL on page load
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash.startsWith('#verify/')) {
-      const protectedId = hash.replace('#verify/', '');
-      setVerificationUrl(`#verify/${protectedId}`);
+    if (hash.startsWith('#verify/') && !showPasswordVerification) {
+      const shortHash = hash.replace('#verify/', '');
+      setVerificationUrl(`#verify/${shortHash}`);
       setShowPasswordVerification(true);
     }
-  }, []);
+  }, []); // Remove dependency to prevent loops
 
   const validateUrl = (inputUrl) => {
     try {
@@ -271,12 +279,10 @@ function App() {
 
     try {
       // 1. FIRST: Safety Check with Google Safe Browsing API
-      console.log('Checking URL safety with Google Safe Browsing...');
       const isSafeUrl = await checkUrlSafety(url);
       
       if (!isSafeUrl) {
         // URL is malicious - STOP HERE, don't proceed to TinyURL
-        console.log('URL flagged as malicious by Google Safe Browsing');
         setIsSafe(false);
         setError('Malicious URL detected - cannot be shortened for security reasons');
         setIsLoading(false);
@@ -284,13 +290,14 @@ function App() {
       }
 
       // 2. ONLY IF SAFE: Proceed to shorten with TinyURL
-      console.log('URL is safe, proceeding to TinyURL...');
       
       let finalUrl;
       if (passwordProtected && password.trim()) {
-        // Create password-protected URL
-        finalUrl = generateProtectedUrl(url, password.trim());
-        setExpiryInfo('Password-protected link created. Note: Protected links are stored locally.');
+        // Create password-protected verification URL first
+        const verificationUrl = generateProtectedUrl(url, password.trim());
+        // Then shorten the verification URL with TinyURL for maximum shortness!
+        finalUrl = await shortenUrl(verificationUrl);
+        setExpiryInfo('Password-protected link created. Works on all devices!');
       } else {
         // Regular URL shortening
         const shortUrl = await shortenUrl(url);
@@ -306,7 +313,6 @@ function App() {
       setQrCodeUrl(qrUrl);
       
     } catch (err) {
-      console.error('Error in handleSubmit:', err);
       // This should only catch TinyURL errors or other unexpected errors
       setError(`Service error: ${err.message}`);
     } finally {
@@ -405,6 +411,13 @@ function App() {
               </div>
             )}
           </div>
+          
+          {/* Warning Note - Appears below the entire password section when checked */}
+          {passwordProtected && (
+            <div className="password-limitation-note">
+              ⚠️ Note: Password-protected links work only on the same device/browser where they were created. For cross-device sharing, use regular shortened links.
+            </div>
+          )}
         </div>
 
         {/* Status Section */}
@@ -565,6 +578,7 @@ function App() {
             <button 
               className="close-modal"
               onClick={() => {
+                window.location.hash = ''; // Clear the hash
                 setShowPasswordVerification(false);
                 setVerificationPassword('');
                 setError(null);
